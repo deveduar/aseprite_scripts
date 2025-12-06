@@ -1,170 +1,239 @@
--- Script Corregido: Reductor de Colores para Aseprite
--- Soluciona el error de "0 colores encontrados" forzando modo RGB
+-- Reductor de Colores ULTRA-RÁPIDO v3.1 (Median-Cut Corregido)
 
 local sprite = app.activeSprite
 if not sprite then return app.alert("No hay ningún sprite abierto.") end
 
--- --- UTILIDADES DE COLOR ---
+-- --- UTILIDADES RÁPIDAS ---
 local function getRGB(colorInt)
-    return app.pixelColor.rgbaR(colorInt), app.pixelColor.rgbaG(colorInt), app.pixelColor.rgbaB(colorInt), app.pixelColor.rgbaA(colorInt)
+    -- Devuelve R, G, B de un color entero
+    return app.pixelColor.rgbaR(colorInt), app.pixelColor.rgbaG(colorInt), app.pixelColor.rgbaB(colorInt)
 end
 
 local function makeColor(r, g, b, a)
+    -- Crea un color entero de Aseprite
     return app.pixelColor.rgba(r, g, b, a)
 end
 
-local function dist3d(c1, c2)
-    local r1, g1, b1, a1 = getRGB(c1)
-    local r2, g2, b2, a2 = getRGB(c2)
-    return math.sqrt((r2-r1)^2 + (g2-g1)^2 + (b2-b1)^2)
+-- --- CLASE DE CAJA PARA ALGORITMO MEDIAN-CUT ---
+local Box = {}
+Box.__index = Box
+
+function Box.new(colors)
+    local self = {
+        colors = colors,
+        minR = 256, minG = 256, minB = 256,
+        maxR = -1, maxG = -1, maxB = -1,
+        rangeR = 0, rangeG = 0, rangeB = 0,
+        longestAxis = 'R',
+    }
+    setmetatable(self, Box)
+    self:calculateBounds()
+    return self
 end
 
-local function mixColors(c1, c2)
-    local r1, g1, b1, a1 = getRGB(c1)
-    local r2, g2, b2, a2 = getRGB(c2)
-    return makeColor(
-        math.floor((r1+r2)/2),
-        math.floor((g1+g2)/2),
-        math.floor((b1+b2)/2),
-        255 -- Forzamos opacidad completa en la mezcla
-    )
-end
+function Box:calculateBounds()
+    local minR, minG, minB = 256, 256, 256
+    local maxR, maxG, maxB = -1, -1, -1
 
-local function findClosestColor(target, palette)
-    local minDist = 999999999
-    local closest = target
-    for _, col in ipairs(palette) do
-        local d = dist3d(target, col)
-        if d < minDist then
-            minDist = d
-            closest = col
-        end
+    -- Bucle para encontrar los límites RGB de los colores en esta caja
+    for _, c in ipairs(self.colors) do
+        minR = math.min(minR, c.r)
+        maxR = math.max(maxR, c.r)
+        minG = math.min(minG, c.g)
+        maxG = math.max(maxG, c.g)
+        minB = math.min(minB, c.b)
+        maxB = math.max(maxB, c.b)
     end
-    return closest
+    
+    self.minR, self.minG, self.minB = minR, minG, minB
+    self.maxR, self.maxG, self.maxB = maxR, maxG, maxB
+
+    self.rangeR = maxR - minR
+    self.rangeG = maxG - minG
+    self.rangeB = maxB - minB
+
+    -- Determinar el eje más largo para la división
+    if self.rangeR >= self.rangeG and self.rangeR >= self.rangeB then
+        self.longestAxis = 'R'
+    elseif self.rangeG >= self.rangeR and self.rangeG >= self.rangeB then
+        self.longestAxis = 'G'
+    else
+        self.longestAxis = 'B'
+    end
 end
 
--- --- DIÁLOGO ---
-local dlg = Dialog("Reducir Colores")
-dlg:number{ id="targetCount", label="Objetivo de Colores:", text="16", decimals=0 }
-dlg:button{ id="ok", text="SIMPLIFY" }
+-- --- DIÁLOGO DE CONFIGURACIÓN ---
+local dlg = Dialog("Reductor Median-Cut")
+dlg:number{ id="targetCount", label="Objetivo Colores (K):", text="16", decimals=0 }
+dlg:button{ id="ok", text="GENERAR PALETA" }
 dlg:show()
 
 local data = dlg.data
 if not data.ok then return end
 local targetCount = data.targetCount
 
--- --- PROCESO PRINCIPAL ---
+-- --- PROCESO PRINCIPAL (O(N log K)) ---
 app.transaction(function()
     
-    -- 1. CORRECCIÓN AUTOMÁTICA DE MODO DE COLOR
-    -- Si la imagen es Indexada o Grises, la pasamos a RGB para poder manipular los colores
     if sprite.colorMode ~= ColorMode.RGB then
-        print("La imagen no es RGB. Convirtiendo a RGB para procesar...")
         app.command.ChangePixelFormat{ format="rgb" }
     end
 
-    print("Analizando píxeles...")
-    
-    local uniqueSet = {}
-    local uniqueList = {}
-    local pixelCounter = 0
-    
-    -- 2. RECOLECTAR COLORES (Iterando todas las capas y cels)
-    for _, layer in ipairs(sprite.layers) do
-        if layer.isImage and layer.isVisible then -- Solo capas visibles e imagen
-            for _, cel in ipairs(layer.cels) do
-                local img = cel.image
-                for it in img:pixels() do
-                    local pixelValue = it()
-                    
-                    -- Obtenemos el Alpha (Transparencia)
-                    local alpha = app.pixelColor.rgbaA(pixelValue)
-                    
-                    -- Consideramos válido si tiene algo de opacidad
-                    if alpha > 0 then
-                        if not uniqueSet[pixelValue] then
-                            uniqueSet[pixelValue] = true
-                            table.insert(uniqueList, pixelValue)
-                        end
-                        pixelCounter = pixelCounter + 1
-                    end
-                end
-            end
-        end
-    end
+    print("1. Colección de colores únicos (O(N))...")
 
-    local startCount = #uniqueList
-    print("Píxeles analizados: " .. pixelCounter)
-    print("Colores únicos encontrados: " .. startCount)
-    
-    if startCount == 0 then
-        return app.alert("Error: Sigue encontrando 0 colores. Asegúrate de que la capa no esté vacía o totalmente transparente.")
-    end
-
-    if startCount <= targetCount then
-        return app.alert("No es necesario reducir: Tienes " .. startCount .. " colores, y quieres " .. targetCount .. ".")
-    end
-
-    -- 3. ALGORITMO DE CLUSTERING (Reducción)
-    local currentPalette = uniqueList
-    
-    -- Bucle de reducción
-    while #currentPalette > targetCount do
-        local minD = 99999999
-        local idx1, idx2 = -1, -1
-        
-        -- Buscamos el par más cercano (optimización simple)
-        -- Nota: Para muchas imágenes grandes esto tomará unos segundos
-        for i=1, #currentPalette do
-            for j=i+1, #currentPalette do
-                local d = dist3d(currentPalette[i], currentPalette[j])
-                if d < minD then
-                    minD = d
-                    idx1 = i
-                    idx2 = j
-                end
-            end
-        end
-        
-        if idx1 ~= -1 then
-            -- Fusionamos los dos colores
-            local newColor = mixColors(currentPalette[idx1], currentPalette[idx2])
-            
-            -- Eliminar (el mayor primero para mantener orden)
-            table.remove(currentPalette, idx2)
-            table.remove(currentPalette, idx1)
-            
-            -- Insertar el nuevo color promedio
-            table.insert(currentPalette, newColor)
-        else
-            break
-        end
-    end
-
-    -- 4. APLICAR CAMBIOS
-    print("Aplicando nueva paleta de " .. #currentPalette .. " colores...")
-    
-    local replacementCache = {}
+    -- 1. COLECCIÓN DE COLORES ÚNICOS
+    local uniqueMap = {}
+    local allColors = {} -- Lista de tablas {r, g, b, originalInt}
     
     for _, layer in ipairs(sprite.layers) do
         if layer.isImage and layer.isVisible then
             for _, cel in ipairs(layer.cels) do
                 local img = cel.image
                 for it in img:pixels() do
-                    local originalColor = it()
+                    local val = it()
                     
-                    if app.pixelColor.rgbaA(originalColor) > 0 then
-                        local newColor
-                        if replacementCache[originalColor] then
-                            newColor = replacementCache[originalColor]
+                    if app.pixelColor.rgbaA(val) > 0 and not uniqueMap[val] then
+                        local r, g, b = getRGB(val)
+                        local obj = { r=r, g=g, b=b, originalInt=val }
+                        uniqueMap[val] = true
+                        table.insert(allColors, obj)
+                    end
+                end
+            end
+        end
+    end
+
+    local startCount = #allColors
+    print("Colores únicos encontrados: " .. startCount)
+    
+    if startCount <= targetCount then
+        return app.alert("No es necesario reducir. Colores actuales: " .. startCount)
+    end
+    
+    if startCount < 2 then
+        return app.alert("La imagen solo tiene 1 color.")
+    end
+
+    -- 2. ALGORITMO MEDIAN-CUT (O(N log K))
+    print("2. Aplicando Median-Cut para generar la paleta...")
+    
+    local boxes = { Box.new(allColors) }
+
+    -- Bucle principal: dividir hasta obtener el número objetivo de cajas
+    while #boxes < targetCount do
+        
+        -- Encontrar la caja con el mayor rango de color para dividir
+        local bestBox = nil
+        local bestBoxIndex = -1 -- ¡Corregido: guardamos el índice!
+        local maxRange = -1 
+
+        for i=1, #boxes do
+            local currentBox = boxes[i]
+            local currentRange = currentBox.rangeR + currentBox.rangeG + currentBox.rangeB
+            
+            if currentRange > maxRange then
+                maxRange = currentRange
+                bestBox = currentBox
+                bestBoxIndex = i -- ¡Corregido: guardamos el índice!
+            end
+        end
+        
+        -- Si no se puede dividir más (ej. todas las cajas tienen colores idénticos), salir
+        if maxRange <= 0 or not bestBox then break end
+
+        -- 2a. Ordenar los colores de la caja por el eje más largo
+        local axis = bestBox.longestAxis
+        
+        -- table.sort necesita una clave dinámica, usamos una función anónima
+        table.sort(bestBox.colors, function(a, b) return a[axis:lower()] < b[axis:lower()] end)
+
+        -- 2b. Encontrar el punto de corte (mediana)
+        local medianIndex = math.floor(#bestBox.colors / 2)
+        
+        -- 2c. Crear las dos nuevas cajas (split)
+        local newColors1 = {}
+        local newColors2 = {}
+        
+        for i=1, #bestBox.colors do
+            if i <= medianIndex then
+                table.insert(newColors1, bestBox.colors[i])
+            else
+                table.insert(newColors2, bestBox.colors[i])
+            end
+        end
+        
+        -- Reemplazar la caja dividida con las dos nuevas
+        table.remove(boxes, bestBoxIndex) -- ¡CORREGIDO! Usamos el índice guardado
+        
+        -- Solo insertamos si tienen colores
+        if #newColors1 > 0 then table.insert(boxes, Box.new(newColors1)) end
+        if #newColors2 > 0 then table.insert(boxes, Box.new(newColors2)) end
+        
+        if #boxes >= 1024 then break end
+    end
+
+    -- 3. CALCULAR PALETA FINAL (Promedio de las cajas)
+    local finalPalette = {}
+    for _, box in ipairs(boxes) do
+        local sumR, sumG, sumB = 0, 0, 0
+        local count = #box.colors
+        
+        if count > 0 then
+            for _, colorObj in ipairs(box.colors) do
+                sumR = sumR + colorObj.r
+                sumG = sumG + colorObj.g
+                sumB = sumB + colorObj.b
+            end
+
+            local avgR = math.floor(sumR / count)
+            local avgG = math.floor(sumG / count)
+            local avgB = math.floor(sumB / count)
+            
+            table.insert(finalPalette, { 
+                r=avgR, g=avgG, b=avgB, 
+                finalInt=makeColor(avgR, avgG, avgB, 255) 
+            })
+        end
+    end
+    
+    local finalCount = #finalPalette
+    print("Paleta final generada: " .. finalCount .. " colores.")
+
+    -- 4. REMAPEO FINAL (O(N) Lineal, con caché O(1))
+    print("4. Aplicando nueva paleta a los píxeles...")
+    
+    local cache = {} -- Caché: {colorOriginalInt: colorFinalInt}
+    
+    for _, layer in ipairs(sprite.layers) do
+        if layer.isImage and layer.isVisible then
+            for _, cel in ipairs(layer.cels) do
+                local img = cel.image
+                for it in img:pixels() do
+                    local val = it()
+                    if app.pixelColor.rgbaA(val) > 0 then
+                        
+                        local bestC
+                        if cache[val] then
+                            -- Caso 1: Color ya calculado (O(1))
+                            bestC = cache[val]
                         else
-                            newColor = findClosestColor(originalColor, currentPalette)
-                            replacementCache[originalColor] = newColor
+                            -- Caso 2: Calcular el vecino más cercano (Rápido, paleta pequeña)
+                            local r, g, b = getRGB(val)
+                            local bestD = 999999999
+                            bestC = val
+                            
+                            for _, palCol in ipairs(finalPalette) do
+                                -- Distancia al cuadrado (máxima velocidad)
+                                local d = (palCol.r - r)^2 + (palCol.g - g)^2 + (palCol.b - b)^2
+                                if d < bestD then
+                                    bestD = d
+                                    bestC = palCol.finalInt
+                                end
+                            end
+                            cache[val] = bestC -- Guardar en caché
                         end
                         
-                        if originalColor ~= newColor then
-                            it(newColor)
-                        end
+                        if val ~= bestC then it(bestC) end
                     end
                 end
             end
@@ -172,5 +241,5 @@ app.transaction(function()
     end
     
     app.refresh()
-    app.alert("¡Listo! Colores reducidos de " .. startCount .. " a " .. #currentPalette)
+    app.alert("¡Terminado! Reducido a " .. finalCount .. " colores con Median-Cut.")
 end)
