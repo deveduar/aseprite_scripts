@@ -141,8 +141,13 @@ app.transaction(function()
         end
     end
 
-    -- Finalmente, redimensionar el canvas del sprite
-    sprite:resize(targetWidth, targetHeight)
+    -- Usamos el comando de la API para redimensionar el canvas
+    -- CORRECCIÓN: Usar 'CanvasSize' en lugar de 'ResizeCanvas'
+    app.command.CanvasSize {
+        width = targetWidth,
+        height = targetHeight,
+        location = "Top-Left"
+    }
 end)
 
 app.refresh()
