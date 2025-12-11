@@ -256,3 +256,69 @@ JSON
 ```
 
 > **Note:** Although Pixel Lab exports may contain `keypoints` data, the current version of this script **ignores** those fields and focuses solely on importing the frames and tags.
+>
+
+# Auto Resize by Block Matrix (C++ Module)
+
+Aseprite script that instantly resizes sprites using the native C++ engine for maximum speed and performance.
+
+## 📋 Requirements
+
+- Aseprite v1.2.40 or higher
+- Script extension enabled
+
+## 📥 Installation
+
+1. Download the `auto_resize_by_block_matrix_C_Module.lua` file
+2. In Aseprite, go to **File → Scripts → Open Scripts Folder**
+3. Copy the file into the opened folder
+4. Restart Aseprite or rescan scripts (**File → Scripts → Rescan Scripts Folder**)
+
+## 🎯 Usage
+
+1. Open a sprite in Aseprite
+2. Go to **File → Scripts → Auto Resize by Block Matrix (C++ Module)**
+3. Enter a **Division Factor**:
+   - **2** = Reduce to 50% (half the original size)
+   - **4** = Reduce to 25% (quarter of the size)
+   - **1.5** = Reduce to 66.6%
+4. The script will show the new size in real-time
+5. Click **"INSTANT RESIZE"** to apply
+
+## 🔧 How It Works
+
+This script uses Aseprite's internal `app.command.SpriteSize` command (written in C++) to resize the entire sprite at once, including all layers and frames.
+
+### Technical Parameters:
+- **Scaling method**: `bilinear` interpolation
+- **Origin position**: `Top-Left` corner
+- **Aspect ratio**: Locked (`lockRatio = true`)
+- **Scope**: Entire sprite (all frames and layers)
+
+## ⚠️ Limitations
+
+- Only allows reduction (factor > 1)
+- Factor must be a number greater than 1
+- Prevents resizing to 0x0 pixels
+- Result is rounded down (floor)
+
+## 💡 Tips
+
+- For extreme reductions (e.g., 16x to 1x), consider applying multiple progressive reductions
+- The bilinear method is ideal for pixel art that needs controlled anti-aliasing
+- Always work on a copy of your original file
+
+## 📄 License
+
+This script is distributed under the MIT License. You can freely modify and distribute it.
+
+## 🐛 Troubleshooting
+
+If you encounter issues:
+1. Verify that a sprite is active
+2. Ensure you're using a numeric factor greater than 1
+3. Check that your Aseprite version is compatible (v1.2.40+)
+
+---
+
+**Note**: This script is perfect for workflows requiring frequent asset resizing, such as tileset preparation, multiple icon creation, or sprite optimization for different resolutions.
